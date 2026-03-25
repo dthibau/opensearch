@@ -1,0 +1,83 @@
+Cache Lucene : Pourquoi la même requête prend plus de temps la 1ère fois comment monitorer.
+
+
+Redémarrage long ?
+==================
+Séquence de démarrage :
+
+Démarrage JVM + plugins
+        ↓
+Discovery (seed_hosts)
+        ↓
+Élection cluster manager  ← bloquant si quorum non atteint
+        ↓
+Chargement cluster state :  la liste de tous les index, leurs mappings, leurs settings, la répartition des shards. Rapide
+        ↓
+Jonction nœuds data : Les nœuds data et coordinating rejoignent le cluster. Chaque nœud data annonce les shards qu'il a sur son disque.
+        ↓
+Gateway recovery          ← lent si beaucoup d'index/shards
+        ↓
+Shard recovery (translog) ← lent si translog non flushé
+        ↓
+Allocation réplicas       ← lent si resync nécessaire
+        ↓
+Cluster GREEN ✅
+
+Diagnostic :
+Surveiller les logs :
+docker logs opensearch-node1 2>&1 | grep -E "recovered|recovery|took|started|initialized"
+
+
+Recovery des shards :
+# Surveiller la recovery en temps réel pendant le démarrage
+GET /_cat/recovery?v&active_only=true
+# Stats globales de recovery
+GET /_cat/recovery?v&h=index,shard,time,type,stage,source_node,target_node
+
+Vérification du translog :
+GET /_nodes/stats/indices/translog?pretty
+# Voir la taille par index
+GET /_cat/indices?v&h=index,docs.count,store.size,pri.store.size
+
+#Forcer le flush
+curl -X POST http://localhost:9200/_flush
+
+# Trop de segments :
+# Nombre de segments par index
+GET /_cat/segments?v&h=index,shard,segment,docs.count,size
+# Stats globales
+GET /_nodes/stats/indices/segments?pretty
+
+Rappel sur le mécanisme d'écriture :
+Document arrive
+      │
+      ├──→ buffer mémoire
+      └──→ translog (disque, append-only, immédiat)
+                │
+         refresh (1s)
+                │
+                ↓
+      segment Lucene (mémoire) ← documents visibles ici
+                │
+          flush (512Mo ou 30min)
+                │
+                ↓
+      segment Lucene (disque) ← fichiers .cfs/.si
+      translog vidé
+                │
+     merge automatique (TieredMergePolicy)
+                │
+                ↓
+      segments fusionnés + documents supprimés purgés physiquement
+=================================
+Réplication obligatoirement synchrone ? NON 
+
+PUT /mon-index/_settings
+{
+  "index.write.wait_for_active_shards": "2"
+}
+
+1 (défaut) - Seul le primaire doit confirmer → quasi-asynchrone
+2- Primaire + 1 replica doivent confirmer
+all - Tous les shards actifs doivent confirmer (max durabilité)
+
