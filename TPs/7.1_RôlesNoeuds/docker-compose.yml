@@ -88,7 +88,7 @@ services:
     environment:
       - cluster.name=opensearch-cluster
       - node.name=os-coord1
-      - node.roles=                     # liste vide = coordinating only
+      - node.roles= []                    # liste vide = coordinating only
       - discovery.seed_hosts=os-manager1,os-data1,os-data2,os-coord1
       - cluster.initial_cluster_manager_nodes=os-manager1
       - bootstrap.memory_lock=true
@@ -104,6 +104,8 @@ services:
         hard: 65536
     networks:
       - opensearch-net
+  #  volumes:
+  #  - ./config/coord/opensearch.yml:/usr/share/opensearch/config/opensearch.yml
 
   # ── OpenSearch Dashboards ─────────────────────────────────────
   opensearch-dashboards:
